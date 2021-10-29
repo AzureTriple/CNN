@@ -1,0 +1,44 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClInclude Include="convolve.cuh">
+      <Filter>Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="debug.h">
+      <Filter>Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="matrix.h">
+      <Filter>Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="intellisense_fix.h">
+      <Filter>Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="GPU.cuh">
+      <Filter>Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu_matrix.cuh">
+      <Filter>Headers</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="Headers">
+      <UniqueIdentifier>{0b3cc427-496f-41cc-9bd6-1d1f620eac44}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source">
+      <UniqueIdentifier>{c6aa36f8-c799-4d2e-a3f4-357d47f7dcba}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="CNN.cpp">
+      <Filter>Source</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <CudaCompile Include="convolve.cu">
+      <Filter>Source</Filter>
+    </CudaCompile>
+    <CudaCompile Include="GPU.cu">
+      <Filter>Source</Filter>
+    </CudaCompile>
+  </ItemGroup>
+</Project>
