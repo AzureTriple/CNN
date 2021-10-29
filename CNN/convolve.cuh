@@ -48,6 +48,15 @@ namespace convolve
     #define _FrFc_ CONVOLVE_CONSTANTS[_iFrFc_]
     #define _OrOc_ CONVOLVE_CONSTANTS[_iOrOc_]
 
+    /*
+    Puts constants used in the GPU convolution function into
+    constant device memory.
+
+    I_,F_,O_: Input, Filter, and Output
+    S_,P_   : Step size and Padding size
+    _r,_c   : # rows and # columns
+    Ch      : # Channels (i.e. depth)
+    */
     void convolveConstants(unsigned Ir,unsigned Ic,
                            unsigned Fr,unsigned Fc,
                            unsigned Or,unsigned Oc,

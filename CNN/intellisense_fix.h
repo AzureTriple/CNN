@@ -1,4 +1,7 @@
+// This file prevents intellisense from throwing a temper tantrum.
+
 #pragma once
+
 #ifdef __INTELLISENSE__
 void __syncthreads();
 void __syncwarp(unsigned mask = ~0);

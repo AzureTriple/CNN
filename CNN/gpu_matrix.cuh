@@ -27,10 +27,12 @@ struct GPUMatrix {
         GPU::destroyDeviceMem(device,stream);
     }
 
+    /* Transfers host data to the device. */
     void transferH2D()
     {
         GPU::transfer<double,cudaMemcpyHostToDevice>(host,device,(size_t)ch*r*c,stream);
     }
+    /* Transfers device data to the host. */
     void transferD2H()
     {
         GPU::transfer<double,cudaMemcpyDeviceToHost>(device,host,(size_t)ch*r*c,stream);

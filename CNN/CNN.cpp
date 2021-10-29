@@ -113,6 +113,9 @@ int main()
     init(F);
     zero(O);
 
+    // I disabled the single-threaded CPU test because it takes too
+    // long to run.
+    
     //clock_t CPU = duration("CPU",I,F,O,convolve::convolveCPU);
     //zero(O);
     clock_t OMP = duration("OMP",I,F,O,convolve::convolveOMP);

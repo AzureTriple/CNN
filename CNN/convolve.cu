@@ -62,7 +62,7 @@ void convolve::convolveCPU(Matrix &I,Matrix &F,Matrix &O,
                         Ochrc += Id[Ichrc] * Fd[Fchrc];
                     }
                 }
-                Ochrc = std::max<double>(0.,Ochrc+bias);
+                Ochrc = std::max<double>(0.,Ochrc+bias); // ReLU and bias operation
             }
         }
     }
@@ -95,6 +95,8 @@ void convolve::convolveOMP(Matrix &I,Matrix &F,Matrix &O,
                    _Fr = F.r,_Fc = F.c,
                    _Or = O.r,_Oc = O.c,
                    _Ch = O.ch;
+    // In the version of OMP supported by the MSVC compiler, we
+    // need to flatten the loop ourselves.
     #pragma omp parallel for
     for(long Ox = 0;Ox < (long)(_Ch*_Or*_Oc);++Ox)
     {
@@ -112,6 +114,7 @@ void convolve::convolveOMP(Matrix &I,Matrix &F,Matrix &O,
                       fc0 = Pc > SOc? Pc-SOc : 0U,
                       fc1 = std::min(_Fc,_Ic+Pc-SOc);
         double &Ochrc = Od[Orch + Oc];
+        // Each thread handles its own output.
         for(unsigned fr = fr0;fr < fr1;++fr)
         {
             const unsigned Irch = Ich + _Ic * (SOr + fr - Pr),
@@ -123,7 +126,7 @@ void convolve::convolveOMP(Matrix &I,Matrix &F,Matrix &O,
                 Ochrc += Id[Ichrc] * Fd[Fchrc];
             }
         }
-        Ochrc = std::max<double>(0.,Ochrc+bias);
+        Ochrc = std::max<double>(0.,Ochrc+bias); // ReLU and bias operation
     }
 }
 
@@ -200,7 +203,9 @@ __inline__ __device__ double warpReduceSum(double v)
 __inline__ __device__ double blockReduceSum(double v)
 {
     extern __shared__ double result[];
-    const unsigned idx = threadIdx.x + blockDim.x*threadIdx.y + blockDim.x*blockDim.y*threadIdx.z;
+    const unsigned idx = threadIdx.x + 
+                         blockDim.x*threadIdx.y + 
+                         blockDim.x*blockDim.y*threadIdx.z;
 
     // Reduce in every warp
     double warp = warpReduceSum(v);
@@ -208,7 +213,8 @@ __inline__ __device__ double blockReduceSum(double v)
         result[idx/warpSize] = warp;
     __syncthreads();
 
-    // Since max threads per is coincidentally (warpSize*warpSize), the
+    // Since maxThreadsPerBlock is coincidentally (warpSize*warpSize), the next reduction
+    // always fits into one warp
     if(idx < warpSize)
     {
         const unsigned blk = (blockDim.x*blockDim.y*blockDim.z+warpSize-1)/warpSize;
@@ -231,8 +237,9 @@ __global__ void convolveKernel(double *I,double *F,double *O,double b)
                   fr0 = _Pr_ > SOr? dPrSOr : 0U,
                   fr1 = umax(_Fr_,_Ir_+dPrSOr),
                    fr = threadIdx.y;
+    // Value of thread in padded region is always zero.
     double localRes = 0;
-    if(fr0 <= fr && fr < fr1)
+    if(fr0 <= fr && fr < fr1) // check if this thread is not in a padded row
     {
         const unsigned Oc = blockIdx.x,
                       SOc = _Sc_*Oc,
@@ -240,7 +247,7 @@ __global__ void convolveKernel(double *I,double *F,double *O,double b)
                       fc0 = _Pc_ > SOc? dPcSOc : 0U,
                       fc1 = umin(_Fc_,_Ic_+dPcSOc),
                        fc = threadIdx.x;
-        if(fc0 <= fc && fc < fc1)
+        if(fc0 <= fc && fc < fc1) // check if this thread is not in a padded column
         {
             const unsigned ch = blockIdx.z,
                           ich = _IrIc_ * ch,
@@ -253,8 +260,9 @@ __global__ void convolveKernel(double *I,double *F,double *O,double b)
 
     // Reduce via shuffling.
     double out = blockReduceSum(localRes);
-    if(!(threadIdx.x|threadIdx.y))
-        O[_OrOc_*blockIdx.z+_Oc_*blockIdx.y+blockIdx.x] = fmax(0.,out+b);
+    if(!(threadIdx.x|threadIdx.y)) // only allow the first thread to modify data
+        O[_OrOc_*blockIdx.z+_Oc_*blockIdx.y+blockIdx.x]
+            = fmax(0.,out+b); // ReLU and bias operation
     __syncthreads();
 }
 void convolve::convolveGPU(GPUMatrix &I,GPUMatrix &F,GPUMatrix &O,
@@ -280,6 +288,7 @@ void convolve::convolveGPU(GPUMatrix &I,GPUMatrix &F,GPUMatrix &O,
     // Run kernel
     convolveKernel CONFIG4(
         grid,block,
+        // Max size needed for the shared memory
         (block.y*block.x*sizeof(double)+(unsigned)GPU::properties.warpSize-1U)/
                       (unsigned)GPU::properties.warpSize,
         O.stream
@@ -290,5 +299,6 @@ void convolve::convolveGPU(GPUMatrix &I,GPUMatrix &F,GPUMatrix &O,
     GPU::sync(O.stream);
 }
 
+// Utility functions in case we want to automatically compute some valid params.
 unsigned computePadding(unsigned Os,unsigned Is,unsigned Fs,unsigned Ss) {return (Os*Ss+Fs-Is)/2;}
 unsigned computeStep(unsigned Os,unsigned Is,unsigned Fs,unsigned Ps) {return (2*Ps+Is-Fs)/Os;}
