@@ -7,16 +7,25 @@
     <ClInclude Include="debug.h">
       <Filter>Headers</Filter>
     </ClInclude>
-    <ClInclude Include="matrix.h">
-      <Filter>Headers</Filter>
-    </ClInclude>
     <ClInclude Include="intellisense_fix.h">
       <Filter>Headers</Filter>
     </ClInclude>
     <ClInclude Include="GPU.cuh">
       <Filter>Headers</Filter>
     </ClInclude>
-    <ClInclude Include="gpu_matrix.cuh">
+    <ClInclude Include="fcl.cuh">
+      <Filter>Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="pool.cuh">
+      <Filter>Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="convolve_test.cuh">
+      <Filter>Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="pool_test.cuh">
+      <Filter>Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="fcl_test.cuh">
       <Filter>Headers</Filter>
     </ClInclude>
   </ItemGroup>
@@ -34,10 +43,16 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <CudaCompile Include="convolve.cu">
+    <CudaCompile Include="GPU.cu">
       <Filter>Source</Filter>
     </CudaCompile>
-    <CudaCompile Include="GPU.cu">
+    <CudaCompile Include="convolve_test.cu">
+      <Filter>Source</Filter>
+    </CudaCompile>
+    <CudaCompile Include="pool_test.cu">
+      <Filter>Source</Filter>
+    </CudaCompile>
+    <CudaCompile Include="fcl_test.cu">
       <Filter>Source</Filter>
     </CudaCompile>
   </ItemGroup>

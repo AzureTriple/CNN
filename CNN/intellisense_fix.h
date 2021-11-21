@@ -7,6 +7,8 @@ void __syncthreads();
 void __syncwarp(unsigned mask = ~0);
 template<typename T>
 T __shfl_down_sync(unsigned,T,unsigned,int width = warpSize);
+unsigned umin(unsigned,unsigned);
+unsigned umax(unsigned,unsigned);
 #define CONFIG2(grid,block)
 #define CONFIG3(grid,block,sh_mem)
 #define CONFIG4(grid,block,sh_mem,stream)
