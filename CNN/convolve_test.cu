@@ -122,126 +122,114 @@ for(unsigned i = 0;i < size;++i)\
     if(!hasErr) printf("\tNo Errors.\n");\
 }
 
+#include "convolve.cuh"
 void convolve_test::testSTC()
 {
     bool hasErr;
-    double *O = (double*)malloc(sizeof(double)*Or*Oc*nF),*dO;
-    convolve::STCLayer<double> layer(Ir,Ic,
-                                     Fr,Fc,nF,
-                                     Or,Oc,Ch,
-                                     Pr,Pc,
-                                     Sr,Sc,
-                                     &O,&dO,
-                                     LR);
-    CPY(   Ir*Ic*Ch,layer.I,INI_I);
+    double *I,*dI;
+    conv::STCLayer<double> layer(Or,Oc,nF,
+                                 Fr,Fc,Ch,
+                                 Pr,Pc,
+                                 Sr,Sc,LR,
+                                 &I,&dI);
+    
+    I = new double[Ir*Ic*Ch];
+    CPY(   Ir*Ic*Ch,      I,INI_I);
     CPY(nF*Fr*Fc*Ch,layer.F,INI_F);
     CPY(nF         ,layer.B,INI_B);
-
     layer.forward();
-    CMP3D("O",Or,Oc,nF,EXP_O,O);
+    CMP3D("O",Or,Oc,nF,EXP_O,layer.O);
     if(hasErr)
     {
-        free(O);
+        delete[] I;
         return;
     }
 
-    dO = (double*)malloc(sizeof(double)*Or*Oc*nF);
-    CPY(Or*Oc*nF,dO,INI_dO);
-
+    layer.dO = new double[Or*Oc*nF];
+    CPY(Or*Oc*nF,layer.dO,INI_dO);
     layer.backward();
-
     CMP4D("F",nF,Fr,Fc,Ch,EXP_F,layer.F);
     CMP1D("B",nF,EXP_B,layer.B);
-    CMP3D("dI",Ir,Ic,Ch,EXP_dI,layer.dI);
+    CMP3D("dI",Ir,Ic,Ch,EXP_dI,dI);
 
-    free(O);
-    free(layer.dI);
+    delete[] I,dI;
 }
 void convolve_test::testOMP()
 {
     bool hasErr;
-    double *O = (double*)malloc(sizeof(double)*Or*Oc*nF),*dO;
-    convolve::OMPLayer<double> layer(Ir,Ic,
-                                     Fr,Fc,nF,
-                                     Or,Oc,Ch,
-                                     Pr,Pc,
-                                     Sr,Sc,
-                                     &O,&dO,
-                                     LR);
-    CPY(   Ir*Ic*Ch,layer.I,INI_I);
+    double *I,*dI;
+    conv::OMPLayer<double> layer(Or,Oc,nF,
+                                 Fr,Fc,Ch,
+                                 Pr,Pc,
+                                 Sr,Sc,LR,
+                                 &I,&dI);
+    
+    I = new double[Ir*Ic*Ch];
+    CPY(   Ir*Ic*Ch,      I,INI_I);
     CPY(nF*Fr*Fc*Ch,layer.F,INI_F);
     CPY(nF         ,layer.B,INI_B);
-
     layer.forward();
-    CMP3D("O",Or,Oc,nF,EXP_O,O);
+    CMP3D("O",Or,Oc,nF,EXP_O,layer.O);
     if(hasErr)
     {
-        free(O);
+        delete[] I;
         return;
     }
 
-    dO = (double*)malloc(sizeof(double)*Or*Oc*nF);
-    CPY(Or*Oc*nF,dO,INI_dO);
-
+    layer.dO = new double[Or*Oc*nF];
+    CPY(Or*Oc*nF,layer.dO,INI_dO);
     layer.backward();
-
     CMP4D("F",nF,Fr,Fc,Ch,EXP_F,layer.F);
     CMP1D("B",nF,EXP_B,layer.B);
-    CMP3D("dI",Ir,Ic,Ch,EXP_dI,layer.dI);
+    CMP3D("dI",Ir,Ic,Ch,EXP_dI,dI);
 
-    free(O);
-    free(layer.dI);
+    delete[] I,dI;
 }
 void convolve_test::testGPU()
 {
     cudaStream_t stream = GPU::createStream();
 
     bool hasErr;
-    double *O,*dO,*d_O,*dI;
-    GPU::allocHostPinned(&dI,Ir*Ic*Ch);
-    GPU::allocHostPinned(&O,Or*Oc*nF);
-    convolve::GPULayer<double> layer(Ir,Ic,
-                                     Fr,Fc,nF,
-                                     Or,Oc,Ch,
-                                     Pr,Pc,
-                                     Sr,Sc,
-                                     &O,&dO,&d_O,
-                                     LR);
-    CPY(   Ir*Ic*Ch,layer.I,INI_I);
+    double *I,*dI,*d_I,*h_dI;
+    conv::GPULayer<double> layer(Or,Oc,nF,
+                                 Fr,Fc,Ch,
+                                 Pr,Pc,
+                                 Sr,Sc,LR,
+                                 &I,&dI,
+                                 stream,&d_I);
+
+    GPU::allocHostPinned(&I,Ir*Ic*Ch);
+    CPY(   Ir*Ic*Ch,      I,INI_I);
     CPY(nF*Fr*Fc*Ch,layer.F,INI_F);
     CPY(nF         ,layer.B,INI_B);
-    layer.alloc_d_I(stream);
-    layer.transferH2D_I(stream);
-
-    layer.forward(stream);
+    GPU::allocTransfer(I,layer.d_I,Ir*Ic*Ch,stream);
+    layer.forward();
+    GPU::destroyDeviceMem(layer.d_O,stream);
+    layer.d_O = nullptr;
     GPU::sync(stream);
-    CMP3D("O",Or,Oc,nF,EXP_O,O);
-
+    CMP3D("O",Or,Oc,nF,EXP_O,layer.O);
     if(hasErr)
     {
-        GPU::destroyHostPinned(dI);
-        GPU::destroyHostPinned(O);
+        GPU::destroyHostPinned(I);
+        GPU::sync(stream);
+        GPU::destroyStream(stream);
         return;
     }
 
-    GPU::allocDeviceMem(&dO,Or*Oc*nF,stream);
-    GPU::transfer<double,cudaMemcpyHostToDevice>((double*)INI_dO,dO,Or*Oc*nF,stream);
-
-    layer.backward(stream);
-    GPU::transfer<double,cudaMemcpyDeviceToHost>(layer.dI,dI,Ir*Ic*Ch,stream);
-    layer.dealloc_dI(stream);
+    GPU::allocTransfer((double*)INI_dO,&layer.dO,Or*Oc*nF,stream);
+    layer.backward();
+    GPU::allocHostPinned(&h_dI,Ir*Ic*Ch);
+    GPU::destroyTransfer(*layer.dI,h_dI,Ir*Ic*Ch,stream);
+    *layer.dI = nullptr;
     GPU::sync(stream);
-    GPU::destroyHostPinned(O);
-
     CMP4D("F",nF,Fr,Fc,Ch,EXP_F,layer.F);
     CMP1D("B",nF,EXP_B,layer.B);
-    CMP3D("dI",Ir,Ic,Ch,EXP_dI,dI);
+    CMP3D("dI",Ir,Ic,Ch,EXP_dI,h_dI);
 
-    GPU::destroyHostPinned(dI);
-    layer.dealloc_d_I(stream);
+    GPU::destroyHostPinned(I);
+    GPU::destroyHostPinned(h_dI);
     GPU::sync(stream);
     GPU::destroyStream(stream);
-    GPU::sync();
 }
 
 

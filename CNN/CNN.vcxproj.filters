@@ -28,6 +28,15 @@
     <ClInclude Include="fcl_test.cuh">
       <Filter>Headers</Filter>
     </ClInclude>
+    <ClInclude Include="layer.h">
+      <Filter>Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="network.h">
+      <Filter>Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="mnist.cuh">
+      <Filter>Headers</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <Filter Include="Headers">
@@ -38,22 +47,25 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="CNN.cpp">
-      <Filter>Source</Filter>
-    </ClCompile>
-  </ItemGroup>
-  <ItemGroup>
     <CudaCompile Include="GPU.cu">
       <Filter>Source</Filter>
     </CudaCompile>
     <CudaCompile Include="convolve_test.cu">
       <Filter>Source</Filter>
     </CudaCompile>
-    <CudaCompile Include="pool_test.cu">
-      <Filter>Source</Filter>
-    </CudaCompile>
     <CudaCompile Include="fcl_test.cu">
       <Filter>Source</Filter>
     </CudaCompile>
+    <CudaCompile Include="pool_test.cu">
+      <Filter>Source</Filter>
+    </CudaCompile>
+    <CudaCompile Include="mnist.cu">
+      <Filter>Source</Filter>
+    </CudaCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="CNN.cpp">
+      <Filter>Source</Filter>
+    </ClCompile>
   </ItemGroup>
 </Project>

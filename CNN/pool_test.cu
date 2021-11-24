@@ -1,5 +1,4 @@
 #include "pool_test.cuh"
-#include "pool.cuh"
 
 constexpr const unsigned Ir = 6,Ic = 6,Ich = 2,
                          Or = 2,Oc = 3,Och = 1,
@@ -70,79 +69,93 @@ for(unsigned i = 0;i < size;++i)\
     if(!hasErr) printf("\tNo Errors.\n");\
 }
 
+#include "pool.cuh"
 void pool_test::testSTC()
 {
     bool hasErr;
-    double *O = (double*)malloc(sizeof(double)*Or*Oc*Och),*dO;
-    pool::STCLayer<double> layer(&O,&dO,Ir,Ic,Ich,Or,Oc,Och,Pr,Pc,Pch);
-    CPY(Ir*Ic*Ich,layer.I,INI_I);
+    double *I,*dI;
+    pool::STCLayer<double> layer(Or,Oc,Och,
+                                 Pr,Pc,Pch,
+                                 &I,&dI);
 
+    I = new double[Ir*Ic*Ich];
+    CPY(Ir*Ic*Ich,I,INI_I);
     layer.forward();
-    CMP3D("O",Or,Oc,Och,EXP_O,O);
-    free(O);
-    if(hasErr) return;
+    CMP3D("O",Or,Oc,Och,EXP_O,layer.O);
+    if(hasErr)
+    {
+        delete[] I;
+        return;
+    }
 
-    dO = (double*)malloc(sizeof(double)*Or*Oc*Och);
-    CPY(Or*Oc*Och,dO,INI_dO);
-
+    layer.dO = new double[Or*Oc*Och];
+    CPY(Or*Oc*Och,layer.dO,INI_dO);
     layer.backward();
-    CMP3D("dI",Ir,Ic,Ich,EXP_dI,layer.dI);
+    CMP3D("dI",Ir,Ic,Ich,EXP_dI,dI);
+
+    delete[] I,dI;
 }
 void pool_test::testOMP()
 {
     bool hasErr;
-    double *O = (double*)malloc(sizeof(double)*Or*Oc*Och),*dO;
-    pool::OMPLayer<double> layer(&O,&dO,Ir,Ic,Ich,Or,Oc,Och,Pr,Pc,Pch);
-    CPY(Ir*Ic*Ich,layer.I,INI_I);
+    double *I,*dI;
+    pool::OMPLayer<double> layer(Or,Oc,Och,
+                                 Pr,Pc,Pch,
+                                 &I,&dI);
 
+    I = new double[Ir*Ic*Ich];
+    CPY(Ir*Ic*Ich,I,INI_I);
     layer.forward();
-    CMP3D("O",Or,Oc,Och,EXP_O,O);
-    free(O);
-    if(hasErr) return;
+    CMP3D("O",Or,Oc,Och,EXP_O,layer.O);
+    if(hasErr)
+    {
+        delete[] I;
+        return;
+    }
 
-    dO = (double*)malloc(sizeof(double)*Or*Oc*Och);
-    CPY(Or*Oc*Och,dO,INI_dO);
-
+    layer.dO = new double[Or*Oc*Och];
+    CPY(Or*Oc*Och,layer.dO,INI_dO);
     layer.backward();
-    CMP3D("dI",Ir,Ic,Ich,EXP_dI,layer.dI);
+    CMP3D("dI",Ir,Ic,Ich,EXP_dI,dI);
+
+    delete[] I,dI;
 }
 void pool_test::testGPU()
 {
     cudaStream_t stream = GPU::createStream();
-
     bool hasErr;
-    double *O,*dO,*h_O,*h_dI;
+    double *I,*d_I,*dI,*h_dI;
+    pool::GPULayer<double> layer(Or,Oc,Och,
+                                 Pr,Pc,Pch,
+                                 &I,&dI,
+                                 stream,&d_I);
 
-    pool::GPULayer<double> layer(&O,&dO,&h_O,Ir,Ic,Ich,Or,Oc,Och,Pr,Pc,Pch);
-
-    GPU::allocHostPinned(&h_O,Or*Oc*Och);
-    GPU::allocDeviceMem(&layer.I,Ir*Ic*Ich,stream);
-    GPU::transfer<double,cudaMemcpyHostToDevice>((double*)INI_I,layer.I,Ir*Ic*Ich,stream);
-    layer.forward(stream);
-    GPU::transfer<double,cudaMemcpyDeviceToHost>(O,h_O,Or*Oc*Och,stream);
-    GPU::destroyDeviceMem(O,stream);
+    GPU::allocHostPinned(&I,Ir*Ic*Ich);
+    CPY(Ir*Ic*Ich,I,INI_I);
+    GPU::allocTransfer(I,&d_I,Ir*Ic*Ich,stream);
+    layer.forward();
+    GPU::destroyDeviceMem(layer.d_O,stream);
+    layer.d_O = nullptr;
     GPU::sync(stream);
-    CMP3D("O",Or,Oc,Och,EXP_O,h_O);
-    GPU::destroyHostPinned(h_O);
+    CMP3D("O",Or,Oc,Och,EXP_O,layer.O);
     if(hasErr)
     {
+        GPU::destroyHostPinned(I);
         GPU::sync(stream);
         GPU::destroyStream(stream);
-        GPU::sync();
         return;
     }
-    
+
+    GPU::allocTransfer((double*)INI_dO,&layer.dO,Or*Oc*Och,stream);
+    layer.backward();
     GPU::allocHostPinned(&h_dI,Ir*Ic*Ich);
-    GPU::allocDeviceMem(&dO,Or*Oc*Och,stream);
-    GPU::transfer<double,cudaMemcpyHostToDevice>((double*)INI_dO,dO,Or*Oc*Och,stream);
-    layer.backward(stream);
-    GPU::transfer<double,cudaMemcpyDeviceToHost>(layer.dI,h_dI,Ir*Ic*Ich,stream);
-    GPU::destroyDeviceMem(layer.dI,stream);
+    GPU::destroyTransfer(dI,h_dI,Ir*Ic*Ich,stream);
+    dI = nullptr;
     GPU::sync(stream);
     CMP3D("dI",Ir,Ic,Ich,EXP_dI,h_dI);
+    
+    GPU::destroyHostPinned(I);
     GPU::destroyHostPinned(h_dI);
-
     GPU::sync(stream);
     GPU::destroyStream(stream);
-    GPU::sync();
 }

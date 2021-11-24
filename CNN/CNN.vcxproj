@@ -72,6 +72,7 @@
       <PreprocessorDefinitions>WIN32;WIN64;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <OpenMPSupport>true</OpenMPSupport>
       <LanguageStandard>stdcpp17</LanguageStandard>
+      <LanguageStandard_C>stdc17</LanguageStandard_C>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
@@ -82,7 +83,7 @@
     </Link>
     <CudaCompile>
       <TargetMachinePlatform>64</TargetMachinePlatform>
-      <AdditionalOptions>-Xcompiler "/openmp" %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>--std c++17 -Xcompiler "/openmp" %(AdditionalOptions)</AdditionalOptions>
       <CudaRuntime>Shared</CudaRuntime>
     </CudaCompile>
   </ItemDefinitionGroup>
@@ -90,6 +91,7 @@
     <CudaCompile Include="convolve_test.cu" />
     <CudaCompile Include="fcl_test.cu" />
     <CudaCompile Include="GPU.cu" />
+    <CudaCompile Include="mnist.cu" />
     <CudaCompile Include="pool_test.cu" />
   </ItemGroup>
   <ItemGroup>
@@ -100,6 +102,9 @@
     <ClInclude Include="fcl_test.cuh" />
     <ClInclude Include="GPU.cuh" />
     <ClInclude Include="intellisense_fix.h" />
+    <ClInclude Include="layer.h" />
+    <ClInclude Include="mnist.cuh" />
+    <ClInclude Include="network.h" />
     <ClInclude Include="pool.cuh" />
     <ClInclude Include="pool_test.cuh" />
   </ItemGroup>

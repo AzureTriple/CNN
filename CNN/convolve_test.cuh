@@ -2,8 +2,6 @@
 
 #define DEBUG
 
-#include "convolve.cuh"
-
 namespace convolve_test
 {
     void testSTC();
