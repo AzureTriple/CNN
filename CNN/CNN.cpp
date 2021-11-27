@@ -1,8 +1,9 @@
-#define DEBUG
+//#define DEBUG
+//#define MEMCHECK
 
 #define CUDA_API_PER_THREAD_DEFAULT_STREAM
 
-#ifdef DBG
+#ifdef MATH
 #include "pool_test.cuh"
 #include <iostream>
 #include <ctime>
@@ -29,213 +30,175 @@ int main()
         return 1;
     }
 }
-#else
-#include "convolve.cuh"
-#include "pool.cuh"
-#include "fcl.cuh"
-#include <cstdio>
-#include <cstdlib>
-#include <ctime>
-#include <fstream>
-
-std::ifstream train_labels("C:/Users/prgmPC/Desktop/School/Y4/ee/CNN/train-labels.idx1-ubyte",std::ifstream::binary);
-std::ifstream train_images("C:/Users/prgmPC/Desktop/School/Y4/ee/CNN/train-images.idx3-ubyte",std::ifstream::binary);
-std::ifstream test_labels("C:/Users/prgmPC/Desktop/School/Y4/ee/CNN/t10k-images.idx1-ubyte",std::ifstream::binary);
-std::ifstream test_images("C:/Users/prgmPC/Desktop/School/Y4/ee/CNN/t10k-images.idx3-ubyte",std::ifstream::binary);
-
-template<typename T,unsigned off>
-T meta(std::ifstream &f)
-{
-    char buf[sizeof(T)];
-    f.seekg(off).read(buf,sizeof(T));
-    for(unsigned i = 0;i < sizeof(T)/2;++i)
-    {
-        char x = buf[sizeof(T)-i-1];
-        buf[sizeof(T)-i-1] = buf[i];
-        buf[i] = x;
-    }
-    return *(T*)(void*)buf;
-}
-
-const unsigned nTrain = meta<unsigned,4>(train_images),
-               nTest = meta<unsigned,4>(test_images);
-const unsigned Ir = meta<unsigned,8>(train_images),
-               Ic = meta<unsigned,12>(train_images),
-               Is = Ir*Ic;
-char *buffer = (char*)malloc(sizeof(char)*Ir*Ic);
-
-unsigned char label(std::ifstream &f,unsigned id) {return (unsigned char)f.seekg((size_t)id+8u).get();}
-void image(std::ifstream &f,double *img,unsigned id)
-{
-    f.seekg((size_t)id*Is+16u).read(buffer,Is);
-    for(unsigned i = 0;i < Ir*Ic;++i)
-        img[i] = buffer[i]/255.;
-}
-
-#include <random>
-std::default_random_engine generator;
-void initialize(double *W,unsigned size,unsigned nI,unsigned nO)
-{
-    double scale = sqrt(2./nI/nO);
-    std::uniform_real_distribution<double> distribution(std::min(nI,nO),std::max(nI,nO));
-    for(unsigned i = 0;i < size;++i)
-        W[i] = distribution(generator)*scale;
-}
-void initialize(double *W,unsigned size,unsigned nI,unsigned nO,unsigned N)
-{
-    double scale = sqrt(2./N);
-    std::uniform_real_distribution<double> distribution(std::min(nI,nO),std::max(nI,nO));
-    for(unsigned i = 0;i < size;++i)
-        W[i] = distribution(generator)*scale;
-}
-
-void shuffle(unsigned *order,unsigned size)
-{
-    while(--size > 1)
-    {
-        const unsigned x = rand() % size;
-        const unsigned y = order[x];
-        order[x] = order[size];
-        order[size] = y;
-    }
-}
-void softmax(double *O)
-{
-    double sumExp(0);
-    for(unsigned i = 0;i < 10;++i)
-        sumExp += O[i] = exp(O[i]);
-    for(unsigned i = 0;i < 10;++i)
-        O[i] /= sumExp;
-}
-void eval(unsigned expected,double *O,double *dO)
-{
-    double sumExp(0);
-    for(unsigned i = 0;i < 10;++i)
-        sumExp += O[i] = exp(O[i]);
-    for(unsigned i = 0;i < 10;++i)
-    {
-        O[i] /= sumExp;
-        dO[i] = O[i] * (!(i != expected) - O[i]);
-    }
-}
-
-constexpr const unsigned N_EPOCHS = 1<<6,N_CONV = 4,N_FCL = 4,
-                         FILTER_SIZE = 15,FCL_SIZE = 1024,N_CH = 4;
-constexpr const double LR = 0.01;
-
-#define MAKE(type,size,name) type *name = new type[size]
-
-int runSTC(unsigned scale)
-{
-    if(!nTrain) return 1;
-    scale += 2;
-    double *dO;
-    MAKE(double,10,O); //if(!O) return 1;
-    MAKE(unsigned,nTrain,order); //if(!order) {free(O); return 1;}
-    MAKE(convolve::STCLayer<double>*,N_CONV,conv); //if(!conv) {free(O); free(order); return 1;}
-    MAKE(    pool::STCLayer<double>*,N_CONV,pool); //if(!pool) {free(O); free(order); free(conv); return 1;}
-    MAKE(     fcl::STCLayer<double>*,N_FCL,fcl);   //if(!fcl ) {free(O); free(order); free(conv); free(pool); return 1;}
-    for(unsigned i = 0;i < nTrain;++i) order[i] = i;
-
-    fcl[N_FCL-1] = new fcl::STCLayer<double>(FCL_SIZE,10,&O,&dO,LR);
-    initialize(fcl[N_FCL-1]->W,FCL_SIZE*10,FCL_SIZE,10);
-    for(unsigned f = N_FCL-1;f;--f)
-    {
-        fcl[f-1] = new fcl::STCLayer<double>(Ir*Ic,FCL_SIZE,&fcl[f]->I,&fcl[f]->dI,LR);
-        initialize(fcl[f]->W,Ir*Ic*FCL_SIZE,Ir*Ic,FCL_SIZE);
-    }
-
-    const unsigned Pr = (FILTER_SIZE-1)/2,Pc = (FILTER_SIZE-1)/2;
-    pool[N_CONV-1] = new pool::STCLayer<double>(&fcl[0]->I,&fcl[0]->dI,
-                                                Ir,Ic,N_CH*scale,
-                                                Ir,Ic,1,
-                                                1,1,N_CH*scale);
-    for(unsigned c = N_CONV-1;c;)
-    {
-        conv[c] = new convolve::STCLayer<double>(Ir,Ic,
-                                                 FILTER_SIZE,FILTER_SIZE,N_CH*scale,
-                                                 Ir,Ic,N_CH,
-                                                 Pr,Pc,1,1,
-                                                 &pool[c]->I,&pool[c]->dI,
-                                                 LR);
-        initialize(conv[c]->F,FILTER_SIZE*FILTER_SIZE*N_CH*scale,Ir*Ic*N_CH,Ir*Ic*N_CH*scale);
-        --c;
-        pool[c] = new pool::STCLayer<double>(&conv[c+1]->I,&conv[c+1]->dI,
-                                             Ir,Ic,N_CH*scale,
-                                             Ir,Ic,N_CH,
-                                             1,1,scale);
-    }
-    conv[0] = new convolve::STCLayer<double>(Ir,Ic,
-                                             FILTER_SIZE,FILTER_SIZE,N_CH*scale,
-                                             Ir,Ic,1,
-                                             Pr,Pc,1,1,
-                                             &pool[0]->I,&pool[0]->dI,
-                                             LR);
-    initialize(conv[0]->F,FILTER_SIZE*FILTER_SIZE*N_CH*scale,Ir*Ic,Ir*Ic*N_CH*scale);
-
-    for(unsigned epoch = 0;epoch < N_EPOCHS;++epoch)
-    {
-        shuffle(order,nTrain);
-        for(unsigned i = 0;i < nTrain;++i)
-        {
-            image(train_images,conv[0]->I,order[i]);
-            for(unsigned l = 0;l < N_CONV;++l)
-            {
-                conv[l]->forward();
-                pool[l]->forward();
-            }
-            for(unsigned l = 0;l < N_FCL;++l) fcl[l]->forward();
-            dO = (double*)malloc(sizeof(double)*10);
-            eval(label(train_labels,order[i]),O,dO);
-            for(unsigned l = N_FCL;l;)
-                fcl[--l]->backward();
-            for(unsigned l = N_CONV;l;)
-            {
-                pool[--l]->backward();
-                conv[l]->backward();
-            }
-        }
-        unsigned correct = 0;
-        for(unsigned i = 0;i < nTest;++i)
-        {
-            image(test_images,conv[0]->I,i);
-            for(unsigned l = 0;l < N_CONV;++l)
-            {
-                conv[l]->forward();
-                pool[l]->forward();
-            }
-            for(unsigned l = 0;l < N_FCL;++l) fcl[l]->forward();
-            softmax(O);
-            double max = O[0];
-            unsigned guess = 0;
-            for(unsigned t = 1;t < 10;++t)
-            {
-                if(max < O[t])
-                {
-                    max = O[t];
-                    guess = t;
-                }
-            }
-            unsigned expected = label(test_labels,i);
-            if(guess == expected) ++correct;
-        }
-        printf("epoch %2u: %5u/%5u = %3.2f%%\n",epoch,correct,nTest,(double)correct/nTest);
-    }
-    for(unsigned l = 0;l < N_CONV;++l)
-        delete conv[l],pool[l];
-    for(unsigned l = 0;l < N_FCL;++l)
-        delete fcl[l];
-    delete[] conv,pool,fcl,O;
-    //free(conv);
-    //free(pool);
-    //free(fcl);
-    //free(O);
-    return 0;
-}
-
+#elif defined(MEMCHECK)
+#include "mnist.cuh"
+#include <stdexcept>
+#include <iostream>
 int main()
 {
+    try 
+    {
+        mnist::init("../../train-images.idx3-ubyte",
+                    "../../train-labels.idx1-ubyte",
+                    "../../t10k-images.idx3-ubyte",
+                    "../../t10k-labels.idx1-ubyte",
+                    1,1,1,1);
+        mnist::memcheck_gpu();
+    }
+    catch(std::exception e)
+    {
+        std::cerr << e.what() << std::endl;
+    }
+    return 0;
+}
+#else
+#include <cstddef>
+#include "mnist.cuh"
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+#include <iostream>
+#include <fstream>
+#include <limits>
+
+unsigned getUnsigned(const char *str,unsigned min)
+{
+    errno = 0;
+    long o(std::strtol(str,nullptr,10));
+    char *err = nullptr;
+    switch(errno)
+    {
+        case EDOM  : err = (char*)"Domain Error";     break;
+        case ERANGE: err = (char*)"Range Error";      break;
+        case EILSEQ: err = (char*)"Invalid Sequence"; break;
+        default:
+            if((unsigned)-1 < o || o < (long)min)
+                err = (char*)"Range Error";
+    }
+    if(err)
+    {
+        printf("%s: %s\n",err,str);
+        exit(1);
+    }
+    return (unsigned)o;
+}
+double getDouble(const char *str)
+{
+    errno = 0;
+    double o(std::strtod(str,nullptr));
+    char *err = nullptr;
+    switch(errno)
+    {
+        case EDOM  : err = (char*)"Domain Error";     break;
+        case ERANGE: err = (char*)"Range Error";      break;
+        case EILSEQ: err = (char*)"Invalid Sequence"; break;
+        default: break;
+    }
+    if(err)
+    {
+        printf("%s: %s\n",err,str);
+        exit(1);
+    }
+    return o;
+}
+enum class Mode {stc,omp,gpu};
+Mode getMode(const char *str)
+{
+    Mode o;
+    bool err(false);
+    switch(str[0])
+    {
+        case 's': o = Mode::stc; break;
+        case 'o': o = Mode::omp; break;
+        case 'g': o = Mode::gpu; break;
+        default: err = true;
+    }
+    if(!err)
+    {
+        char *cmp = nullptr;
+        switch(o)
+        {
+            case Mode::stc: cmp = (char*)"tc"; break;
+            case Mode::omp: cmp = (char*)"mp"; break;
+            case Mode::gpu: cmp = (char*)"pu"; break;
+        }
+        err = std::strncmp(str + 1,cmp,3);
+    }
+    if(err)
+    {
+        printf("Unknown Mode: %s\n",str);
+        exit(1);
+    }
+    return o;
+}
+
+int main(int argc,char *argv[])
+{
+    /*
     srand((int)time(NULL));
-    runSTC(0);
+    int ret = 0;
+    try {mnist::runGPU(0); std::cout << "\nexecution complete.";}
+    catch(std::exception e) {std::cerr << e.what(); ret = 1;}
+    std::cin.ignore();
+    return ret;
+    */
+    /*
+    mnist::dbg();
+    std::cin.ignore();
+    */
+    unsigned epochs = 64,train_count = 1000,test_count = 100,max_scale = 10,min_scale = 0;
+    double LR = 0.01;
+    Mode mode;
+    const char *output;
+    switch(argc)
+    {
+        case 13:   min_scale = getUnsigned(argv[12],0); [[fallthrough]];
+        case 12:   max_scale = getUnsigned(argv[11],0); [[fallthrough]];
+        case 11:  test_count = getUnsigned(argv[10],1); [[fallthrough]];
+        case 10: train_count = getUnsigned(argv[ 9],1); [[fallthrough]];
+        case  9:      epochs = getUnsigned(argv[ 8],1); [[fallthrough]];
+        case  8:          LR = getDouble  (argv[ 7]  ); [[fallthrough]];
+        case  7:        mode = getMode    (argv[ 2]  );
+                      output = argv[1];
+                 mnist::init(argv[3],argv[4],argv[5],argv[6],
+                             epochs,train_count,test_count,LR);
+                 break;
+        default:
+            printf("Usage: %s <output> <stc|omp|gpu> <train_img> <train_lbl> <test_img> <test_lbl> "
+                   "[lr] [epochs] [train_per_epoch] [test_per_epoch] [max_scale] [min_scale]\n",argv[0]);
+            return 1;
+    }
+    std::ofstream data(output);
+    data.precision(std::numeric_limits<double>::max_digits10);
+    data << "setup,tearDown,highF,lowF,avgF,highB,lowB,avgB" << std::endl;
+    for(unsigned scale = min_scale;scale <= max_scale;++scale)
+    {
+        mnist::Record record;
+        try
+        {
+            switch(mode)
+            {
+                case Mode::stc: record = mnist::runSTC(scale); break;
+                case Mode::omp: record = mnist::runOMP(scale); break;
+                case Mode::gpu: record = mnist::runGPU(scale); break;
+            }
+        }
+        catch(std::exception e)
+        {
+            std::cerr << e.what();
+            data.close();
+            return 1;
+        }
+        data << record.setup    << ','
+             << record.tearDown << ','
+             << record.highF    << ','
+             << record.lowF     << ','
+             << record.avgF     << ','
+             << record.highB    << ','
+             << record.lowB     << ','
+             << record.avgB     << std::endl;
+    }
+    data.close();
+    return 0;
 }
 #endif

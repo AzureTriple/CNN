@@ -1,5 +1,4 @@
 #include "fcl_test.cuh"
-#include "fcl.cuh"
 
 constexpr const unsigned Is = 20,Os = 4;
 
@@ -63,102 +62,100 @@ for(unsigned i = 0;i < size;++i)\
     if(!hasErr) printf("\tNo Errors.\n");\
 }
 
+#include "fcl.cuh"
+
 void fcl_test::testSTC()
 {
     bool hasErr;
-    double *O,*dO;
-    fcl::STCLayer<double> layer(Is,Os,&O,&dO,1);
+    double *I,*dI;
+    fcl::STCLayer<double> layer(Is,Os,&I,&dI,1);
 
-    CPY(Is   ,layer.I,INI_I);
+    I = new double[Is];
+    CPY(Is   ,      I,INI_I);
     CPY(Is   ,layer.B,INI_B);
     CPY(Is*Os,layer.W,INI_W);
-    O = (double*)malloc(sizeof(double)*Os);
-
     layer.forward();
-    CMP1D("O",Os,EXP_O,O);
-    free(O);
-    if(hasErr) return;
+    CMP1D("O",Os,EXP_O,layer.O);
+    if(hasErr)
+    {
+        delete[] I;
+        return;
+    }
 
-    dO = (double*)malloc(sizeof(double)*Os);
-    CPY(Os,dO,INI_dO);
-
+    layer.dO = new double[Os];
+    CPY(Os,layer.dO,INI_dO);
     layer.backward();
-    CMP1D("dI",Is,EXP_dI,layer.dI);
-    free(layer.dI);
+    CMP1D("dI",Is,EXP_dI,dI);
     CMP1D("B",Is,EXP_B,layer.B);
-    CMP2D("W",Os,Is,EXP_W,layer.W);
+    CMP2D("W",Is,Os,EXP_W,layer.W);
+
+    delete[] I,dI;
 }
 void fcl_test::testOMP()
 {
     bool hasErr;
-    double *O,*dO;
-    fcl::OMPLayer<double> layer(Is,Os,&O,&dO,1);
+    double *I,*dI;
+    fcl::OMPLayer<double> layer(Is,Os,&I,&dI,1);
 
-    CPY(Is   ,layer.I,INI_I);
+    I = new double[Is];
+    CPY(Is   ,      I,INI_I);
     CPY(Is   ,layer.B,INI_B);
     CPY(Is*Os,layer.W,INI_W);
-    O = (double*)malloc(sizeof(double)*Os);
-
     layer.forward();
-    CMP1D("O",Os,EXP_O,O);
-    free(O);
-    if(hasErr) return;
+    CMP1D("O",Os,EXP_O,layer.O);
+    if(hasErr)
+    {
+        delete[] I;
+        return;
+    }
 
-    dO = (double*)malloc(sizeof(double)*Os);
-    CPY(Os,dO,INI_dO);
-
+    layer.dO = new double[Os];
+    CPY(Os,layer.dO,INI_dO);
     layer.backward();
-    CMP1D("dI",Is,EXP_dI,layer.dI);
-    free(layer.dI);
+    CMP1D("dI",Is,EXP_dI,dI);
     CMP1D("B",Is,EXP_B,layer.B);
-    CMP2D("W",Os,Is,EXP_W,layer.W);
+    CMP2D("W",Is,Os,EXP_W,layer.W);
+    
+    delete[] I,dI;
 }
 void fcl_test::testGPU()
 {
     cudaStream_t stream = GPU::createStream();
-
     bool hasErr;
-    double *O,*dO,*d_O;
-    fcl::GPULayer<double> layer(Is,Os,&O,&dO,1,&d_O);
+    double *I,*dI,*d_I,*h_dI;
+    fcl::GPULayer<double> layer(Is,Os,(double**)&INI_I,&dI,1,
+                                &d_I,stream);
 
-    CPY(Is   ,layer.I,INI_I);
+    GPU::allocHostPinned(&I,Is);
+    CPY(Is   ,      I,INI_I);
     CPY(Is   ,layer.B,INI_B);
     CPY(Is*Os,layer.W,INI_W);
-    layer.alloc_d_I(stream);
-    layer.transferH2D_I(stream);
-    GPU::allocHostPinned(&O,Os);
-
-    layer.forward(stream);
-    GPU::transfer<double,cudaMemcpyDeviceToHost>(d_O,O,Os,stream);
-    GPU::destroyDeviceMem(d_O,stream);
+    GPU::allocTransfer(I,layer.d_I,Is,stream);
+    layer.forward();
+    GPU::destroyDeviceMem(layer.d_O,stream);
+    layer.d_O = nullptr;
     GPU::sync(stream);
-    CMP1D("O",Os,EXP_O,O);
-    GPU::destroyHostPinned(O);
+    CMP1D("O",Os,EXP_O,layer.O);
     if(hasErr)
     {
-        GPU::sync(stream);
+        GPU::destroyHostPinned(I);
         GPU::destroyStream(stream);
-        GPU::sync();
         return;
     }
 
-    double *dI;
-    GPU::allocHostPinned(&dI,Is);
-    GPU::allocDeviceMem(&dO,Os,stream);
-    GPU::transfer<double,cudaMemcpyHostToDevice>((double*)INI_dO,dO,Os,stream);
-
-    layer.backward(stream);
-    GPU::transfer<double,cudaMemcpyDeviceToHost>(layer.dI,dI,Is,stream);
-    GPU::destroyDeviceMem(layer.dI,stream);
+    GPU::allocTransfer((double*)INI_dO,&layer.dO,Os,stream);
+    layer.backward();
+    GPU::allocHostPinned(&h_dI,Is);
+    GPU::destroyTransfer(*layer.dI,h_dI,Is,stream);
+    *layer.dI = nullptr;
     GPU::sync(stream);
-    CMP1D("dI",Is,EXP_dI,dI);
-    GPU::destroyHostPinned(dI);
+    CMP1D("dI",Is,EXP_dI,h_dI);
     CMP1D("B",Is,EXP_B,layer.B);
-    CMP2D("W",Os,Is,EXP_W,layer.W);
+    CMP2D("W",Is,Os,EXP_W,layer.W);
 
-    GPU::sync(stream);
+    GPU::destroyHostPinned(I);
+    GPU::destroyHostPinned(h_dI);
     GPU::destroyStream(stream);
-    GPU::sync();
 }
 
 void fcl_test::dbg()

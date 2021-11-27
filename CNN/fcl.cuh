@@ -1,344 +1,101 @@
 #pragma once
 
-#include "intellisense_fix.h"
-#include <cuda_runtime.h>
-#include <device_launch_parameters.h>
-#include <algorithm>
-#include <omp.h>
+#include "layer.h"
 #include "GPU.cuh"
 
 namespace fcl
 {
-    /*
-    Note:
-        The weight matrix is indexed <output,input> in decreasing order
-    */
+    using layer::Layer;
+
     template<typename T>
-    struct Layer
+    struct FCLLayer : public Layer<T>
     {
-        T *I,*W,*B,**O,*dI,**dO,LR;
-        unsigned Is,Os;
+        T **I,*W,*B,**dI,*IB;
+        const unsigned Is,Os;
+        const T LR;
 
-        Layer(unsigned Is,unsigned Os,T **O,T **dO,T LR)
-            : I(nullptr),W(nullptr),B(nullptr),O(O),
-              Is(Is),Os(Os),dI(nullptr),dO(dO),LR(LR) {}
+        FCLLayer(const unsigned Is,const unsigned Os,T **I,T **dI,const T LR)
+            : Layer<T>(),
+              I(I),dI(dI),
+              W(nullptr),B(nullptr),IB(nullptr),
+              Is(Is),Os(Os),LR(LR) {}
 
-        virtual ~Layer() {}
+        virtual ~FCLLayer() {}
 
-        virtual void forward() = 0;
-        virtual void backward() = 0;
+        void init();
     };
 
     template<typename T>
-    struct CPULayer : public Layer<T>
+    struct STCLayer : public FCLLayer<T>
     {
-        using Layer::I; using Layer::W; using Layer::B; using Layer::O;
-        using Layer::dI; using Layer::dO;
-        using Layer::Is; using Layer::Os;
+        using FCLLayer::I; using FCLLayer::W; using FCLLayer::B;
+        using FCLLayer::dI; using FCLLayer::IB;
+        using FCLLayer::Is; using FCLLayer::Os;
+        using Layer::O; using Layer::dO; using FCLLayer::LR;
 
-        CPULayer(unsigned Is,unsigned Os,T **O,T **dO,T LR)
-            : Layer<T>(Is,Os,O,dO,LR)
+        STCLayer(const unsigned Is,const unsigned Os,T **I,T **dI,const T LR)
+            : FCLLayer<T>(Is,Os,I,dI,LR)
         {
-            alloc_I();
-            alloc_W();
-            alloc_B();
+            W = new T[Is*Os];
+            B = new T[Is];
+            O = new T[Os];
+            IB = new T[Is];
         }
+        ~STCLayer() {delete[] W,B,O,IB;}
 
-        virtual ~CPULayer()
-        {
-            dealloc_I();
-            dealloc_W();
-            dealloc_B();
-        }
-
-        void alloc_I() {I = (T*)malloc(sizeof(T)*Is);}
-        void alloc_W() {
-            W = (T*)malloc(sizeof(T)*Is*Os);
-            W[0] = T(0);
-        }
-        void alloc_B() {B = (T*)malloc(sizeof(T)*Is);}
-
-        void dealloc_I() {free((void*)I);}
-        void dealloc_W() {free((void*)W);}
-        void dealloc_B() {free((void*)B);}
-
-        void alloc_dI() {dI = (T*)malloc(sizeof(T)*Is);}
-        // DEBUG: potentially unsafe
-        void dealloc_dO() {free((void*)*dO);}
+        void forward() override;
+        void backward() override;
     };
 
     template<typename T>
-    struct STCLayer : public CPULayer<T>
-    {
-        using Layer::I; using Layer::W; using Layer::B; using Layer::O;
-        using Layer::dI; using Layer::dO; using Layer::LR;
-        using Layer::Is; using Layer::Os;
+    struct OMPLayer : public FCLLayer<T> {
+        using FCLLayer::I; using FCLLayer::W; using FCLLayer::B;
+        using FCLLayer::dI; using FCLLayer::IB;
+        using FCLLayer::Is; using FCLLayer::Os;
+        using Layer::O; using Layer::dO; using FCLLayer::LR;
 
-        using CPULayer::CPULayer;
-        using CPULayer::alloc_dI;
-        using CPULayer::dealloc_dO;
-
-        void forward() override
+        OMPLayer(const unsigned Is,const unsigned Os,T **I,T **dI,const T LR)
+            : FCLLayer<T>(Is,Os,I,dI,LR)
         {
-            for(unsigned i = 0;i < Is;++i)
-                I[i] = std::max<T>(T(0),I[i]+B[i]);
-            for(unsigned o = 0;o < Os;++o)
-            {
-                T v(0);
-                const unsigned wo = Is*o;
-                for(unsigned i = 0;i < Is;++i)
-                    v += I[i] * W[wo+i];
-                (*O)[o] = v;
-            }
+            W = new T[Is*Os];
+            B = new T[Is];
+            O = new T[Os];
+            IB = new T[Is];
         }
-        /*
-        Preconditions:
-            - 'dO' already allocated
-        Effects:
-            - 'dO' deallocated
-            - 'dI' allocated
-        */
-        void backward() override
-        {
-            alloc_dI();
+        ~OMPLayer() {delete[] W,B,O,IB;}
 
-            for(unsigned o = 0;o < Os;++o)
-                (*dO)[o] *= LR;
-            for(unsigned i = 0;i < Is;++i)
-            {
-                const T &Iv = I[i];
-                T dIv(0);
-                if(Iv != T(0))
-                {
-                    for(unsigned o = 0;o < Os;++o)
-                    {
-                        const unsigned w = Is*o+i;
-                        const T &dLdO = (*dO)[o];
-                        dIv += dLdO * W[w];
-                        W[w] -= dLdO * Iv;
-                    }
-                    B[i] -= dIv;
-                }
-                dI[i] = dIv;
-            }
-
-            dealloc_dO();
-        }
+        void forward() override;
+        void backward() override;
     };
 
     template<typename T>
-    struct OMPLayer : public CPULayer<T>
-    {
-        using Layer::I; using Layer::W; using Layer::B; using Layer::O;
-        using Layer::dI; using Layer::dO; using Layer::LR;
-        using Layer::Is; using Layer::Os;
+    struct GPULayer : public FCLLayer<T> {
+        using FCLLayer::I; using FCLLayer::W; using FCLLayer::B;
+        using FCLLayer::dI; using FCLLayer::IB;
+        using FCLLayer::Is; using FCLLayer::Os;
+        using Layer::O; using Layer::dO; using FCLLayer::LR;
 
-        using CPULayer::CPULayer;
-        using CPULayer::alloc_dI;
-        using CPULayer::dealloc_dO;
+        T **d_I,*d_O;
+        cudaStream_t stream;
 
-        void forward() override
+        GPULayer(const unsigned Is,const unsigned Os,T **I,T **dI,const T LR,
+                 T **d_I,cudaStream_t stream)
+            : FCLLayer<T>(Is,Os,I,dI,LR),d_I(d_I),d_O(nullptr),
+              stream(stream)
         {
-            #pragma omp parallel for
-            for(long i = 0;i < (long)Is;++i)
-                I[i] = std::max<T>(T(0),I[i]+B[i]);
-            #pragma omp parallel for
-            for(long o = 0;o < (long)Os;++o)
-            {
-                T v(0);
-                const unsigned wo = Is*(unsigned)o;
-                for(unsigned i = 0;i < Is;++i)
-                    v += I[i] * W[wo+i];
-                (*O)[o] = v;
-            }
+            GPU::allocHostPinned(&W,Is*Os);
+            GPU::allocHostPinned(&B,Is);
+            GPU::allocHostPinned(&O,Os);
+            GPU::allocHostPinned(&IB,Is);
         }
-        /*
-        Preconditions:
-            - 'dO' already allocated
-        Effects:
-            - 'dO' deallocated
-            - 'dI' allocated
-        */
-        void backward() override
+        ~GPULayer()
         {
-            alloc_dI();
-
-            #pragma omp parallel for
-            for(long o = 0;o < (long)Os;++o)
-                (*dO)[o] *= LR;
-            #pragma omp parallel for
-            for(long i = 0;i < (long)Is;++i)
-            {
-                const T &Iv = I[i];
-                T dIv(0);
-                if(Iv != T(0))
-                {
-                    for(unsigned o = 0;o < Os;++o)
-                    {
-                        const unsigned w = Is*o+(unsigned)i;
-                        const T dLdO = (*dO)[o];
-                        dIv += dLdO * W[w];
-                        W[w] -= dLdO * Iv;
-                    }
-                    B[i] -= dIv;
-                }
-                dI[i] = dIv;
-            }
-
-            dealloc_dO();
-        }
-    };
-
-    template<typename T>
-    __global__ void fwd_I(T *__restrict__ i,
-                          const T *__restrict__ b,
-                          const unsigned _Is)
-    {
-        const unsigned idx = blockDim.x * blockIdx.x + threadIdx.x;
-        if(idx < _Is)
-        {
-            const T iv = i[idx] + b[idx];
-            i[idx] = iv > T(0)? iv : T(0);
-        }
-    }
-    template<typename T>
-    __global__ void fwd_main(const T *__restrict__ i,
-                             const T *__restrict__ w,
-                             T *__restrict__ o,
-                             const unsigned _Is,
-                             const unsigned _Os)
-    {
-        const unsigned ix = threadIdx.x,ox = blockIdx.x;
-        T v(0);
-        if(ix < _Is && ox < _Os)
-            v = i[ix] * w[_Is*ox+ix];
-        v = blockReduceSum<T>(v);
-        if(!ix) o[ox] = v;
-    }
-    template<typename T>
-    __global__ void bkwd_dO(T *__restrict__ dldo,
-                            const T lr,
-                            const unsigned _Os)
-    {
-        const unsigned idx = blockDim.x * blockIdx.x + threadIdx.x;
-        if(idx < _Os) dldo[idx] *= lr;
-    }
-    template<typename T>
-    __global__ void bkwd_main(const T *__restrict__ dldo,
-                              const T *__restrict__ i,
-                              T *__restrict__ w,
-                              T *__restrict__ b,
-                              T *__restrict__ di,
-                              const unsigned _Is,
-                              const unsigned _Os)
-    {
-        const unsigned ix = blockIdx.x,
-                       ox = threadIdx.x,
-                       wx = _Is*ox+ix;
-        T dIv(0);
-        if(ox < _Os && i[ix] != T(0))
-        {
-            const T dLdO = dldo[ox];
-            dIv = dLdO * w[wx];
-            w[wx] -= dLdO * i[ix];
-        }
-        dIv = blockReduceSum(dIv);
-        if(!ox) b[ix] -= di[ix] = dIv;
-    }
-
-    /*
-    NOTE:
-        Max size for each layer should be maxThreadsPerBlock due to block reduction
-    */
-    template<typename T>
-    struct GPULayer : public Layer<T>
-    {
-        using Layer::I; using Layer::W; using Layer::B; using Layer::O;
-        using Layer::dI; using Layer::dO; using Layer::LR;
-        using Layer::Is; using Layer::Os;
-        T *d_I,*d_W,*d_B,**d_O;
-
-        GPULayer(unsigned Is,unsigned Os,T **O,T **dO,T LR,T **d_O,
-                 unsigned hostAllocMode_I = cudaHostAllocDefault,
-                 unsigned hostAllocMode_W = cudaHostAllocDefault,
-                 unsigned hostAllocMode_B = cudaHostAllocDefault)
-            : Layer<T>(Is,Os,O,dO,LR),
-              d_I(nullptr),d_W(nullptr),
-              d_B(nullptr),d_O(d_O)
-        {
-            #ifdef DEBUG
-            if(Is > (unsigned)GPU::properties.maxThreadsPerBlock)
-                err("(Is=",Is,")>(maxThreadsPerBlock=",GPU::properties.maxThreadsPerBlock,')');
-            if(Os > (unsigned)GPU::properties.maxThreadsPerBlock)
-                err("(Os=",Os,")>(maxThreadsPerBlock=",GPU::properties.maxThreadsPerBlock,')');
-            #endif // DEBUG
-            alloc_I(hostAllocMode_I);
-            alloc_W(hostAllocMode_W);
-            alloc_B(hostAllocMode_B);
+            GPU::destroyHostPinned(W);
+            GPU::destroyHostPinned(B);
+            GPU::destroyHostPinned(O);
+            GPU::destroyHostPinned(IB);
         }
 
-        virtual ~GPULayer()
-        {
-            dealloc_I();
-            dealloc_W();
-            dealloc_B();
-        }
-
-        void alloc_I(unsigned mode) {GPU::allocHostPinned(&I,Is,mode);}
-        void alloc_W(unsigned mode) {GPU::allocHostPinned(&W,Is*Os,mode);}
-        void alloc_B(unsigned mode) {GPU::allocHostPinned(&B,Is,mode);}
-
-        void dealloc_I() {GPU::destroyHostPinned((void*)I);}
-        void dealloc_W() {GPU::destroyHostPinned((void*)W);}
-        void dealloc_B() {GPU::destroyHostPinned((void*)B);}
-
-        void alloc_dI(cudaStream_t stream) {GPU::allocDeviceMem(&dI,Is,stream);}
-        // DEBUG: potentially unsafe
-        void dealloc_dO(cudaStream_t stream) {GPU::destroyDeviceMem(dO,stream);}
-
-        void alloc_d_I(cudaStream_t stream) {GPU::allocDeviceMem(&d_I,Is,stream);}
-        void alloc_d_W(cudaStream_t stream) {GPU::allocDeviceMem(&d_W,(size_t)Is*Os,stream);}
-        void alloc_d_B(cudaStream_t stream) {GPU::allocDeviceMem(&d_B,Is,stream);}
-
-        // DEBUG: potentially unsafe
-        void alloc_d_O(cudaStream_t stream) {GPU::allocDeviceMem(d_O,Os,stream);}
-        // DEBUG: potentially unsafe
-        void dealloc_d_O(cudaStream_t stream) {GPU::destroyDeviceMem(d_O,stream);}
-
-        void dealloc_d_I(cudaStream_t stream) {GPU::destroyDeviceMem((void*)d_I,stream);}
-        void dealloc_d_W(cudaStream_t stream) {GPU::destroyDeviceMem((void*)d_W,stream);}
-        void dealloc_d_B(cudaStream_t stream) {GPU::destroyDeviceMem((void*)d_B,stream);}
-
-        void transferH2D_I(cudaStream_t stream)
-        {
-            GPU::transfer<T,cudaMemcpyHostToDevice>(I,d_I,Is,stream);
-        }
-        void transferH2D_W(cudaStream_t stream)
-        {
-            GPU::transfer<T,cudaMemcpyHostToDevice>(W,d_W,(size_t)Is*Os,stream);
-        }
-        void transferH2D_B(cudaStream_t stream)
-        {
-            GPU::transfer<T,cudaMemcpyHostToDevice>(B,d_B,Is,stream);
-        }
-        void transferH2D_O(cudaStream_t stream)
-        {
-            GPU::transfer<T,cudaMemcpyHostToDevice>(*O,*d_O,Os,stream);
-        }
-
-        void transferD2H_I(cudaStream_t stream)
-        {
-            GPU::transfer<T,cudaMemcpyDeviceToHost>(d_I,I,Is,stream);
-        }
-        void transferD2H_W(cudaStream_t stream)
-        {
-            GPU::transfer<T,cudaMemcpyDeviceToHost>(d_W,W,(size_t)Is*Os,stream);
-        }
-        void transferD2H_B(cudaStream_t stream)
-        {
-            GPU::transfer<T,cudaMemcpyDeviceToHost>(d_B,B,Is,stream);
-        }
-        
         /*
         Preconditions:
             - 'I' already in device memory
@@ -346,52 +103,7 @@ namespace fcl
             - 'I' removed from device memory
             - 'O' allocated to device memory
         */
-        void forward(cudaStream_t stream)
-        {
-            // Allocate and transfer bias vector
-            alloc_d_B(stream);
-            transferH2D_B(stream);
-
-            // Compute ReLU and bias
-            {
-                const unsigned maxBlock = GPU::properties.maxThreadsPerBlock;
-                dim3 block(std::min<unsigned>(maxBlock,Is));
-                dim3 grid((block.x-1+maxBlock)/maxBlock);
-
-                fwd_I CONFIG4(grid,block,0,stream)(d_I,d_B,Is);
-            }
-
-            // Cleanup bias vector
-            dealloc_d_B(stream);
-
-            // Allocate and transfer weight matrix
-            alloc_d_W(stream);
-            transferH2D_W(stream);
-
-            // Allocate ouput vector
-            alloc_d_O(stream);
-
-            // Compute 'I*W'
-            {
-                dim3 block(Is);
-                dim3 grid(Os);
-
-                fwd_main CONFIG4(
-                    grid,block,
-                    GPU::reduceSM<T>(Is,GPU::properties.warpSize),
-                    stream
-                )(d_I,d_W,*d_O,Is,Os);
-            }
-
-            // Cleanup weights
-            dealloc_d_W(stream);
-
-            // Transfer and clean up input
-            transferD2H_I(stream);
-            dealloc_d_I(stream);
-        }
-        void forward() override {forward(0);}
-
+        void forward() override;
         /*
         Preconditions:
             - 'dO' already in device memory
@@ -399,58 +111,256 @@ namespace fcl
             - 'dO' deallocated
             - 'dI' allocated in device memory
         */
-        void backward(cudaStream_t stream)
-        {
-            // Scale by learning rate
-            {
-                const unsigned maxBlock = GPU::properties.maxThreadsPerBlock;
-                dim3 block(std::min<unsigned>(maxBlock,Os));
-                dim3 grid((block.x-1+maxBlock)/maxBlock);
-
-                bkwd_dO CONFIG4(grid,block,0,stream)(*dO,LR,Os);
-            }
-
-            // Allocate and transfer input
-            alloc_d_I(stream);
-            transferH2D_I(stream);
-
-            // Allocate and transfer bias
-            alloc_d_B(stream);
-            transferH2D_B(stream);
-
-            // Allocate and transfer weights
-            alloc_d_W(stream);
-            transferH2D_W(stream);
-
-            // Allocate dL/dI
-            alloc_dI(stream);
-
-            // Compute dL/dI, update weights, and update bias
-            {
-                dim3 block(Os);
-                dim3 grid(Is);
-
-                bkwd_main CONFIG4(
-                    grid,block,
-                    GPU::reduceSM<T>(Os,GPU::properties.warpSize),
-                    stream
-                )(*dO,d_I,d_W,d_B,dI,Is,Os);
-            }
-
-            // Cleanup dL/dO
-            dealloc_dO(stream);
-
-            // Transfer and cleanup weights
-            transferD2H_W(stream);
-            dealloc_d_W(stream);
-
-            // Transfer and cleanup bias
-            transferD2H_B(stream);
-            dealloc_d_B(stream);
-
-            // Cleanup input
-            dealloc_d_I(stream);
-        }
-        void backward() override {backward(0);}
+        void backward() override;
     };
+}
+
+#include "intellisense_fix.h"
+#include <cuda_runtime.h>
+#include <device_launch_parameters.h>
+#include <algorithm>
+#include <omp.h>
+#include <random>
+
+template<typename T>
+void fcl::FCLLayer<T>::init()
+{
+    static std::default_random_engine generator;
+    std::normal_distribution<double> distribution(0,std::sqrt(2./Is));
+    for(unsigned w = 0;w < Is*Os;++w)
+        W[w] = distribution(generator);
+}
+
+template<typename T>
+void fcl::STCLayer<T>::forward()
+{
+    for(unsigned i = 0;i < Is;++i)
+        IB[i] = std::max<T>(T(0),(*I)[i]+B[i]);
+    for(unsigned o = 0;o < Os;++o)
+    {
+        T v(0);
+        const unsigned wo = Is*o;
+        for(unsigned i = 0;i < Is;++i)
+            v += IB[i] * W[wo+i];
+        O[o] = v;
+    }
+}
+
+template<typename T>
+void fcl::STCLayer<T>::backward()
+{
+    for(unsigned o = 0;o < Os;++o)
+        dO[o] *= LR;
+
+    *dI = new T[Is];
+    for(unsigned i = 0;i < Is;++i)
+    {
+        const T &Iv = IB[i];
+        T dIv(0);
+        if(Iv != T(0))
+        {
+            for(unsigned o = 0;o < Os;++o)
+            {
+                const unsigned w = Is*o+i;
+                const T &dLdO = dO[o];
+                dIv += dLdO * W[w];
+                W[w] -= dLdO * Iv;
+            }
+            B[i] -= dIv;
+        }
+        (*dI)[i] = dIv;
+    }
+
+    delete[] dO;
+    dO = nullptr;
+}
+
+template<typename T>
+void fcl::OMPLayer<T>::forward()
+{
+    #pragma omp parallel for
+    for(long i = 0;i < (long)Is;++i)
+        IB[i] = std::max<T>(T(0),(*I)[i]+B[i]);
+    #pragma omp parallel for
+    for(long o = 0;o < (long)Os;++o)
+    {
+        T v(0);
+        const unsigned wo = Is*(unsigned)o;
+        for(unsigned i = 0;i < Is;++i)
+            v += IB[i] * W[wo+i];
+        O[o] = v;
+    }
+}
+
+template<typename T>
+void fcl::OMPLayer<T>::backward()
+{
+    #pragma omp parallel for
+    for(long o = 0;o < (long)Os;++o)
+        dO[o] *= LR;
+
+    *dI = new T[Is];
+    #pragma omp parallel for
+    for(long i = 0;i < (long)Is;++i)
+    {
+        const T &Iv = IB[i];
+        T dIv(0);
+        if(Iv != T(0))
+        {
+            for(unsigned o = 0;o < Os;++o)
+            {
+                const unsigned w = Is*o+(unsigned)i;
+                const T dLdO = dO[o];
+                dIv += dLdO * W[w];
+                W[w] -= dLdO * Iv;
+            }
+            B[i] -= dIv;
+        }
+        (*dI)[i] = dIv;
+    }
+
+    delete[] dO;
+    dO = nullptr;
+}
+
+template<typename T>
+__global__ void fwd_I(const T *__restrict__ i,
+                      T *__restrict__ ib,
+                      const T *__restrict__ b,
+                      const unsigned _Is)
+{
+    const unsigned idx = blockDim.x * blockIdx.x + threadIdx.x;
+    if(idx < _Is)
+    {
+        const T iv = i[idx] + b[idx];
+        ib[idx] = iv > T(0)? iv : T(0);
+    }
+}
+template<typename T>
+__global__ void fwd_main(const T *__restrict__ i,
+                         const T *__restrict__ w,
+                         T *__restrict__ o,
+                         const unsigned _Is,
+                         const unsigned _Os)
+{
+    const unsigned ix = threadIdx.x,ox = blockIdx.x;
+    T v(0);
+    //if(ix < _Is && ox < _Os)
+    if(IN_BOUNDS(x))
+        v = i[ix] * w[_Is*ox+ix];
+    v = blockReduceSum(v);
+    if(!ix) o[ox] = v;
+}
+
+template<typename T>
+void fcl::GPULayer<T>::forward()
+{
+    // Allocate and transfer bias and temp vectors
+    T *d_B,*d_IB;
+    GPU::allocTransfer(B,&d_B,Is,stream);
+    GPU::allocTransfer(IB,&d_IB,Is,stream);
+
+    // Compute ReLU and bias
+    {
+        const unsigned maxBlock = GPU::properties.maxThreadsPerBlock;
+        dim3 block(std::min<unsigned>(maxBlock,Is));
+        dim3 grid((block.x-1+maxBlock)/maxBlock);
+
+        fwd_I CONFIG4(grid,block,0,stream)(*d_I,d_IB,d_B,Is);
+    }
+
+    // Cleanup input and bias vectors
+    GPU::destroyDeviceMem(d_B,stream);
+    GPU::destroyDeviceMem(*d_I,stream);
+    *d_I = nullptr;
+
+    // Allocate and transfer weight matrix
+    T *d_W;
+    GPU::allocTransfer(W,&d_W,Is*Os,stream);
+
+    // Allocate ouput vector
+    GPU::allocDeviceMem(&d_O,Os,stream);
+
+    // Compute 'I*W'
+    {
+        dim3 block(Is);
+        dim3 grid(Os);
+
+        fwd_main CONFIG4(
+            grid,block,
+            REDUCE_SM(Is,T),
+            stream
+        )(d_IB,d_W,d_O,Is,Os);
+    }
+
+    // Cleanup weights
+    GPU::destroyDeviceMem(d_W,stream);
+
+    // Transfer and clean up input
+    GPU::destroyTransfer(d_IB,IB,Is,stream);
+
+    // Transfer output
+    GPU::transfer<T,cudaMemcpyDeviceToHost>(d_O,O,Os,stream);
+}
+
+template<typename T>
+__global__ void bkwd_main(const T *__restrict__ dldo,
+                          const T *__restrict__ i,
+                          T *__restrict__ w,
+                          T *__restrict__ b,
+                          T *__restrict__ di,
+                          const unsigned _Is,
+                          const unsigned _Os,
+                          const T LR)
+{
+    const unsigned ix = blockIdx.x,
+                   ox = threadIdx.x,
+                   wx = _Is*ox+ix;
+    T dIv(0);
+    //if(ox < _Os && i[ix])
+    if(IN_BOUNDS(x) && i[ix])
+    {
+        dIv = dldo[ox] * w[wx];
+        w[wx] -= dldo[ox] * i[ix] * LR;
+    }
+    dIv = blockReduceSum(dIv);
+    if(!ox) b[ix] -= (di[ix] = dIv) * LR;
+}
+
+template<typename T>
+void fcl::GPULayer<T>::backward()
+{
+    // Allocate and transfer
+    T *d_IB,*d_B,*d_W;
+    GPU::allocTransfer(IB,&d_IB,Is,stream);
+    GPU::allocTransfer(B,&d_B,Is,stream);
+    GPU::allocTransfer(W,&d_W,Is*Os,stream);
+
+    // Allocate dL/dI
+    GPU::allocDeviceMem(dI,Is,stream);
+
+    // Compute dL/dI, update weights, and update bias
+    {
+        dim3 block(Os);
+        dim3 grid(Is);
+
+        bkwd_main CONFIG4(
+            grid,block,
+            REDUCE_SM(Os,T),
+            stream
+        )(dO,d_IB,d_W,d_B,*dI,Is,Os,LR);
+    }
+
+    // Cleanup dL/dO
+    GPU::destroyDeviceMem(dO,stream);
+    dO = nullptr;
+
+    // Transfer and cleanup weights
+    GPU::destroyTransfer(d_W,W,Is*Os,stream);
+
+    // Transfer and cleanup bias
+    GPU::destroyTransfer(d_B,B,Is,stream);
+
+    // Cleanup input
+    GPU::destroyDeviceMem(d_IB,stream);
 }

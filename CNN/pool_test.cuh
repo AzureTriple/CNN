@@ -1,7 +1,5 @@
 #pragma once
 
-#define DEBUG
-
 namespace pool_test
 {
     void testSTC();

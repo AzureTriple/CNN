@@ -24,15 +24,15 @@ __inline__ __device__ T warpReduceSum(T v)
 template<typename T>
 __inline__ __device__ T blockReduceSum(T v)
 {
-    extern __shared__ T res[];
+    extern __shared__ T resSum[];
     const unsigned Bx = blockDim.x,By = blockDim.y,Bz = blockDim.z,
                    bx = threadIdx.x,by = threadIdx.y,bz = threadIdx.z,
                     M = (Bx*By*Bz - 1 + warpSize) / warpSize,
                     t = By*Bz*bx+Bz*by+bz;
     v = warpReduceSum<T>(v);
-    if(!(t % warpSize)) res[t/warpSize] = v;
+    if(!(t % warpSize)) resSum[t/warpSize] = v;
     __syncthreads();
-    v = t < M? res[t] : T(0);
+    v = t < M? resSum[t] : T(0);
     __syncthreads();
     return warpReduceSum<T>(v);
 }
@@ -57,18 +57,19 @@ __inline__ __device__ pair<T> warpReduceMax(pair<T> v)
     }
     return v;
 }
+
 template<typename T>
 __inline__ __device__ pair<T> blockReduceMax(pair<T> v)
 {
-    extern __shared__ pair<T> res[];
+    extern __shared__ pair<T> resMax[];
     const unsigned Bx = blockDim.x, By = blockDim.y, Bz = blockDim.z,
                    bx = threadIdx.x,by = threadIdx.y,bz = threadIdx.z,
                     M = (Bx*By*Bz - 1 + warpSize) / warpSize,
                     t = By*Bz*bx+Bz*by+bz;
     v = warpReduceMax(v);
-    if(!(t % warpSize)) res[t/warpSize] = v;
+    if(!(t % warpSize)) resMax[t/warpSize] = v;
     __syncthreads();
-    v = t < M? res[t] : res[M-1];
+    v = t < M? resMax[t] : resMax[M-1];
     __syncthreads();
     return warpReduceMax(v);
 }
@@ -124,6 +125,13 @@ namespace GPU
     }
     /* Deallocates memory on the device. */
     void destroyDeviceMem(void *arr,cudaStream_t stream);
+    /* Allocates and zero-initializes memory on the device.*/
+    template<typename T>
+    void callocDeviceMem(T **arr,size_t count,cudaStream_t stream)
+    {
+        allocDeviceMem<T>(arr,count,stream);
+        check(cudaMemsetAsync((void*)*arr,0,sizeof(T)*count,stream));
+    }
     
     /* Transfers data. */
     template<typename T,cudaMemcpyKind MODE = cudaMemcpyDefault>
@@ -131,16 +139,38 @@ namespace GPU
     {
         GPU::check(cudaMemcpyAsync((void*)dst,(void*)src,count*sizeof(T),MODE,stream));
     }
+    /* Allocates memory on the device, then transfers data from the host. */
+    template<typename T>
+    void allocTransfer(T *src,T **dst,size_t count,cudaStream_t stream)
+    {
+        allocDeviceMem<T>(dst,count,stream);
+        transfer<T,cudaMemcpyHostToDevice>(src,*dst,count,stream);
+    }
+    /* Transfers data from device to host, then deallocates the device memory. */
+    template<typename T>
+    void destroyTransfer(T *src,T *dst,size_t count,cudaStream_t stream)
+    {
+        transfer<T,cudaMemcpyDeviceToHost>(src,dst,count,stream);
+        destroyDeviceMem((void*)src,stream);
+    }
 
     /* Synchronizes the device with the host. */
     void sync();
     /* Synchronizes events on the specified stream. */
     void sync(cudaStream_t stream);
+    /* Resets the device memory. */
+    void reset();
 
     /* Computes the required size of shared memory for the block reduce. */
     template<typename T>
-    inline unsigned reduceSM(unsigned vol,unsigned warpsize)
+    inline size_t reduceSM(unsigned vol,unsigned warpsize)
     {
         return (vol*sizeof(T)-1U+warpsize)/warpsize;
     }
+    #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ <= 860
+    #define REDUCE_SM(vol,type) (vol+31)/32*sizeof(type)
+    #else
+    #define REDUCE_SM(vol,type) (vol-1U+GPU::properties.warpSize)/GPU::properties.warpSize*sizeof(type)
+    #endif
+    #define IN_BOUNDS(axis) (threadIdx.axis < blockDim.axis)
 }
