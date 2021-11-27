@@ -14,3 +14,5 @@ void GPU::destroyDeviceMem(void *arr,cudaStream_t stream) {check(cudaFreeAsync(a
 
 void GPU::sync() {check(cudaDeviceSynchronize());}
 void GPU::sync(cudaStream_t stream) {check(cudaStreamSynchronize(stream));}
+
+void GPU::reset() {sync(); check(cudaDeviceReset());}

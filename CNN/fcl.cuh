@@ -1,7 +1,7 @@
 #pragma once
 
 #include "layer.h"
-#include "gpu.cuh"
+#include "GPU.cuh"
 
 namespace fcl
 {
@@ -245,7 +245,8 @@ __global__ void fwd_main(const T *__restrict__ i,
 {
     const unsigned ix = threadIdx.x,ox = blockIdx.x;
     T v(0);
-    if(ix < _Is && ox < _Os)
+    //if(ix < _Is && ox < _Os)
+    if(IN_BOUNDS(x))
         v = i[ix] * w[_Is*ox+ix];
     v = blockReduceSum(v);
     if(!ix) o[ox] = v;
@@ -287,7 +288,7 @@ void fcl::GPULayer<T>::forward()
 
         fwd_main CONFIG4(
             grid,block,
-            GPU::reduceSM<T>(Is,(unsigned)GPU::properties.warpSize),
+            REDUCE_SM(Is,T),
             stream
         )(d_IB,d_W,d_O,Is,Os);
     }
@@ -316,7 +317,8 @@ __global__ void bkwd_main(const T *__restrict__ dldo,
                    ox = threadIdx.x,
                    wx = _Is*ox+ix;
     T dIv(0);
-    if(ox < _Os && i[ix])
+    //if(ox < _Os && i[ix])
+    if(IN_BOUNDS(x) && i[ix])
     {
         dIv = dldo[ox] * w[wx];
         w[wx] -= dldo[ox] * i[ix] * LR;
@@ -344,7 +346,7 @@ void fcl::GPULayer<T>::backward()
 
         bkwd_main CONFIG4(
             grid,block,
-            GPU::reduceSM<T>(Os,(unsigned)GPU::properties.warpSize),
+            REDUCE_SM(Os,T),
             stream
         )(dO,d_IB,d_W,d_B,*dI,Is,Os,LR);
     }

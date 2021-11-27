@@ -1,7 +1,7 @@
 #pragma once
 
 #include "layer.h"
-#include "gpu.cuh"
+#include "GPU.cuh"
 
 namespace pool
 {
@@ -305,7 +305,8 @@ __global__ void fwdKernel(const T *__restrict__ I,
                              C.Pch*pc+
                                    pch;
     pair<T> v{I[_i],0};
-    if(pr < C.Pr && pc < C.Pc && pch < C.Pch)
+    //if(pr < C.Pr && pc < C.Pc && pch < C.Pch)
+    if(IN_BOUNDS(x) && IN_BOUNDS(y) && IN_BOUNDS(z))
         v = pair<T>{I[i],p};
     v = blockReduceMax(v);
     if(!(pr|pc|pch))
@@ -329,7 +330,7 @@ void pool::GPULayer<T>::forward()
     const CONSTANTS C{Ir,Ic,Ich,Or,Oc,Och,Pr,Pc,Pch};
     fwdKernel CONFIG4(
         grid,block,
-        GPU::reduceSM<pair<T>>(Pr*Pc*Pch,(unsigned)GPU::properties.warpSize),
+        REDUCE_SM(Pr*Pc*Pch,pair<T>),
         stream
     )(*d_I,d_O,d_P,C);
 

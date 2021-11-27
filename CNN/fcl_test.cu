@@ -139,7 +139,6 @@ void fcl_test::testGPU()
     if(hasErr)
     {
         GPU::destroyHostPinned(I);
-        GPU::sync(stream);
         GPU::destroyStream(stream);
         return;
     }
@@ -156,7 +155,6 @@ void fcl_test::testGPU()
 
     GPU::destroyHostPinned(I);
     GPU::destroyHostPinned(h_dI);
-    GPU::sync(stream);
     GPU::destroyStream(stream);
 }
 

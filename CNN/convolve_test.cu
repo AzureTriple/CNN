@@ -211,7 +211,6 @@ void convolve_test::testGPU()
     if(hasErr)
     {
         GPU::destroyHostPinned(I);
-        GPU::sync(stream);
         GPU::destroyStream(stream);
         return;
     }
@@ -228,7 +227,6 @@ void convolve_test::testGPU()
 
     GPU::destroyHostPinned(I);
     GPU::destroyHostPinned(h_dI);
-    GPU::sync(stream);
     GPU::destroyStream(stream);
 }
 

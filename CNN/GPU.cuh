@@ -125,6 +125,7 @@ namespace GPU
     }
     /* Deallocates memory on the device. */
     void destroyDeviceMem(void *arr,cudaStream_t stream);
+    /* Allocates and zero-initializes memory on the device.*/
     template<typename T>
     void callocDeviceMem(T **arr,size_t count,cudaStream_t stream)
     {
@@ -138,12 +139,14 @@ namespace GPU
     {
         GPU::check(cudaMemcpyAsync((void*)dst,(void*)src,count*sizeof(T),MODE,stream));
     }
+    /* Allocates memory on the device, then transfers data from the host. */
     template<typename T>
     void allocTransfer(T *src,T **dst,size_t count,cudaStream_t stream)
     {
         allocDeviceMem<T>(dst,count,stream);
         transfer<T,cudaMemcpyHostToDevice>(src,*dst,count,stream);
     }
+    /* Transfers data from device to host, then deallocates the device memory. */
     template<typename T>
     void destroyTransfer(T *src,T *dst,size_t count,cudaStream_t stream)
     {
@@ -151,16 +154,23 @@ namespace GPU
         destroyDeviceMem((void*)src,stream);
     }
 
-
     /* Synchronizes the device with the host. */
     void sync();
     /* Synchronizes events on the specified stream. */
     void sync(cudaStream_t stream);
+    /* Resets the device memory. */
+    void reset();
 
     /* Computes the required size of shared memory for the block reduce. */
     template<typename T>
-    inline unsigned reduceSM(unsigned vol,unsigned warpsize)
+    inline size_t reduceSM(unsigned vol,unsigned warpsize)
     {
         return (vol*sizeof(T)-1U+warpsize)/warpsize;
     }
+    #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ <= 860
+    #define REDUCE_SM(vol,type) (vol+31)/32*sizeof(type)
+    #else
+    #define REDUCE_SM(vol,type) (vol-1U+GPU::properties.warpSize)/GPU::properties.warpSize*sizeof(type)
+    #endif
+    #define IN_BOUNDS(axis) (threadIdx.axis < blockDim.axis)
 }

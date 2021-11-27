@@ -1,6 +1,7 @@
 #pragma once
 
 #include "layer.h"
+#include <cstdio>
 
 namespace network
 {

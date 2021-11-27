@@ -1,7 +1,5 @@
 #pragma once
 
-#define DEBUG
-
 namespace fcl_test
 {
     void testSTC();

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "layer.h"
-#include "gpu.cuh"
+#include "GPU.cuh"
 
 namespace conv
 {
@@ -464,7 +464,8 @@ __global__ void dLdB(const T *__restrict__ dO,
                              C.nF*oc+
                                   f;
     T dldb(0);
-    if(ox < C.Or*C.Oc*C.nF && o[ox])
+    //if(ox < C.Or*C.Oc*C.nF && o[ox])
+    if(IN_BOUNDS(x) && IN_BOUNDS(y) && o[ox])
         dldb = dO[ox];
     dldb = blockReduceSum(dldb);
     if(!(or|oc)) b[f] -= dldb * LR;
@@ -515,7 +516,8 @@ __global__ void dLdI(const T *__restrict__ dO,
                              C.Ch*ic+
                                   ch;
     T dldi(0);
-    if(ff < blockDim.z && fr < C.Fr && fc < C.Fc)
+    if(_fx < C.nF*C.Fr*C.Fc*C.Ch && _ox < C.Or*C.Oc*C.nF &&
+       ff < blockDim.z && fr < C.Fr && fc < C.Fc)
         dldi = f[_fx] * dO[_ox];
     dldi = blockReduceSum(dldi);
     if(!(threadIdx.x|threadIdx.y|threadIdx.z))
@@ -600,7 +602,7 @@ void conv::GPULayer<T>::forward()
                       Sr,Sc};
     fwdKernel CONFIG4(
         grid,block,
-        GPU::reduceSM<T>(Fr*Fc*Ch,GPU::properties.warpSize),
+        REDUCE_SM(Fr*Fc*Ch,T),
         stream
     )(*d_I,d_F,d_O,d_B,C);
 
@@ -610,7 +612,7 @@ void conv::GPULayer<T>::forward()
     // Clean up memory
     GPU::destroyDeviceMem(d_B,stream);
     GPU::destroyDeviceMem(d_F,stream);
-    GPU::destroyDeviceMem(d_I,stream);
+    GPU::destroyDeviceMem(*d_I,stream);
     *d_I = nullptr;
 }
 
@@ -624,8 +626,6 @@ Effects:
 template<typename T>
 void conv::GPULayer<T>::backward()
 {
-    const unsigned warpsize = GPU::properties.warpSize;
-
     // Set constants
     const CONSTANTS C {Ir,Ic,
                        Fr,Fc,nF,
@@ -645,7 +645,7 @@ void conv::GPULayer<T>::backward()
 
         dLdB CONFIG4(
             grid,block,
-            GPU::reduceSM<T>(Oc*Or,warpsize),
+            REDUCE_SM(Oc*Or,T),
             stream
         )(dO,d_O,d_B,C,LR);
     }
@@ -667,7 +667,7 @@ void conv::GPULayer<T>::backward()
                     
         dLdI CONFIG4(
             grid,block,
-            GPU::reduceSM<T>(Fc*Fr*nF,warpsize),
+            REDUCE_SM(Fr*Fc*nF,T),
             stream
         )(dO,*dI,d_F,C);
     }
@@ -682,7 +682,7 @@ void conv::GPULayer<T>::backward()
 
         dLdF CONFIG4(
             grid,block,
-            GPU::reduceSM<T>(Oc*Or,warpsize),
+            REDUCE_SM(Or*Oc,T),
             stream
         )(dO,d_F,*d_I,C,LR);
     }
